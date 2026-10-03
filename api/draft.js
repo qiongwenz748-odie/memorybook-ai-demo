@@ -1,0 +1,54 @@
+const MAX_TEXT_CHARS = 8000;
+
+function parseModelJson(content) {
+  const text = String(content || '').trim().replace(/^```json\s*/i, '').replace(/```$/i, '');
+  return JSON.parse(text);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed.' });
+  }
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(503).json({ error: 'AI service is not configured yet.' });
+  }
+  const transcript = typeof req.body?.transcript === 'string' ? req.body.transcript.trim() : '';
+  if (!transcript) return res.status(400).json({ error: 'A transcript is required.' });
+  if (transcript.length > MAX_TEXT_CHARS) return res.status(413).json({ error: 'Transcript is too long.' });
+
+  const system = `You are MemoryBook AI, an evidence-grounded autobiography drafting assistant. Extract only facts explicitly stated in the transcript. Never infer, embellish, diagnose, or invent details. Return valid JSON only, with this schema: {"draft":"string or empty","facts":[{"id":"E1","kind":"PERSON|DATE|LOCATION|EVENT|OTHER","value":"verbatim or concise stated fact","excerpt":"exact supporting quote"}],"question":"one clarification question or empty"}. Create a gentle first-person-neutral biographical paragraph only when an event is explicitly stated. If a key detail is missing, leave draft empty and ask one clarification question. Every factual claim in draft must be supported by one fact excerpt.`;
+  try {
+    const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://memorybook-ai-demo.vercel.app',
+        'X-OpenRouter-Title': 'MemoryBook AI Demo',
+      },
+      body: JSON.stringify({
+        model: 'openrouter/auto',
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: transcript }],
+      }),
+    });
+    const payload = await upstream.json();
+    if (!upstream.ok) {
+      console.error('OpenRouter draft error', upstream.status, payload?.error?.message);
+      return res.status(upstream.status).json({ error: 'Draft generation failed. Please try again shortly.' });
+    }
+    const result = parseModelJson(payload?.choices?.[0]?.message?.content);
+    const facts = Array.isArray(result.facts) ? result.facts.slice(0, 12).map((fact, index) => ({
+      id: `E${index + 1}`,
+      kind: String(fact?.kind || 'OTHER').toUpperCase().slice(0, 20),
+      value: String(fact?.value || '').slice(0, 500),
+      excerpt: String(fact?.excerpt || '').slice(0, 700),
+    })).filter(fact => fact.value && fact.excerpt) : [];
+    return res.status(200).json({ draft: String(result.draft || '').slice(0, 2000), facts, question: String(result.question || '').slice(0, 500) });
+  } catch (error) {
+    console.error('Draft request failed', error);
+    return res.status(502).json({ error: 'Could not reach the drafting service.' });
+  }
+}
