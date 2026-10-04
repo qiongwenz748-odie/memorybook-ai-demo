@@ -9,7 +9,10 @@ function normaliseFacts(rawFacts) {
   if (!Array.isArray(rawFacts)) return [];
   const eventNumbers = new Map();
   let nextEventNumber = 1;
-  return rawFacts.slice(0, 12).map((fact, index) => {
+  // A personal timeline can contain several facts per scene. Keep enough
+  // evidence for later events instead of cutting the last scene down to a
+  // single date after the first twelve facts.
+  return rawFacts.slice(0, 30).map((fact, index) => {
     // eventId is supplied by the model. Keeping a map makes the displayed
     // labels consecutive even if the model returns 1, 3, 7, for example.
     const sourceEventId = String(fact?.eventId ?? fact?.event_id ?? fact?.eventNumber ?? `fact-${index + 1}`).trim() || `fact-${index + 1}`;
@@ -35,7 +38,7 @@ export default async function handler(req, res) {
   if (!transcript) return res.status(400).json({ error: 'A transcript is required.' });
   if (transcript.length > MAX_TEXT_CHARS) return res.status(413).json({ error: 'Transcript is too long.' });
 
-  const system = `You are MemoryBook AI, an evidence-grounded autobiography drafting assistant. Extract only facts explicitly stated in the transcript. Never infer, embellish, diagnose, or invent details. Return valid JSON only, with this schema: {"draft":"string or empty","facts":[{"eventId":"1","kind":"NAME|PERSON|DATE|LOCATION|EVENT|OTHER","value":"verbatim or concise stated fact","excerpt":"exact supporting quote"}],"question":"one clarification question or empty"}. Use NAME only when the speaker explicitly states their own name, such as “My name is…”, and keep it separate from every event. Use the same eventId for every fact about the same described event or scene, including its people, date, and location. Start a new eventId only when the narration moves to a different event, time, or scene; do not group separate events merely because they mention the same person or place. Create a gentle first-person-neutral biographical paragraph only when an event is explicitly stated. If a key detail is missing, leave draft empty and ask one clarification question. Every factual claim in draft must be supported by one fact excerpt.`;
+  const system = `You are MemoryBook AI, an evidence-grounded autobiography drafting assistant. Extract only facts explicitly stated in the transcript. Never infer, embellish, diagnose, or invent details. Return valid JSON only, with this schema: {"draft":"string or empty","facts":[{"eventId":"1","kind":"NAME|PERSON|DATE|LOCATION|EVENT|OTHER","value":"verbatim or concise stated fact","excerpt":"exact supporting quote"}],"question":"one clarification question or empty"}. Use NAME only when the speaker explicitly states their own name, such as “My name is…”, and keep it separate from every event. Use the same eventId for every fact about the same described event or scene, including its people, date, and location. For every described scene, return its EVENT fact as well as any stated date, person, and location; never return a date as the only fact for a scene when the same sentence says what happened. Start a new eventId only when the narration moves to a different event, time, or scene; do not group separate events merely because they mention the same person or place. Create a gentle first-person-neutral biographical paragraph only when an event is explicitly stated. If a key detail is missing, leave draft empty and ask one clarification question. Every factual claim in draft must be supported by one fact excerpt.`;
   try {
     const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
