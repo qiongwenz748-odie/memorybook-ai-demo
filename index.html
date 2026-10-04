@@ -63,9 +63,9 @@ EVENT: she opened a small tailor shop with her sister after saving for three yea
     <footer>MemoryBook AI course-project MVP · Evidence is kept separate from the generated prose so the user can review and correct it.</footer>
   </main>
   <script>
-    const patterns = {person:/\bPERSON:\s*([^;\n]+)/ig,date:/\bDATE:\s*([^;\n]+)/ig,location:/\bLOCATION:\s*([^;\n]+)/ig,event:/\bEVENT:\s*([^;\n]+)/ig};
+    const patterns = /\b(PERSON|DATE|LOCATION|EVENT):\s*([^;\n]+)/ig;
     const labels = {person:'PERSON',date:'DATE',location:'LOCATION',event:'EVENT'};
-    function extract(text){let facts=[], n=1; for(const [kind,re] of Object.entries(patterns)){re.lastIndex=0; for(const match of text.matchAll(re)){facts.push({kind,value:match[1].trim().replace(/[.]$/,''),id:'E'+n++,excerpt:match[0].trim()});}} return facts;}
+    function extract(text){let facts=[], eventNumber=1, sawEvent=false;patterns.lastIndex=0;for(const match of text.matchAll(patterns)){const kind=match[1].toLowerCase();if(kind==='event'&&sawEvent)eventNumber++;facts.push({kind,value:match[2].trim().replace(/[.]$/,''),id:'E'+eventNumber,excerpt:match[0].trim()});if(kind==='event')sawEvent=true;}return facts;}
     function first(facts,kind){return facts.find(f=>f.kind===kind)}
     function question(facts){const q={event:'What happened that you would most like future family members to understand?',date:'About when did this memory take place? An approximate year is fine.',location:'Where did this memory take place?',person:'Who else was involved, and how would you like them described?'}; return q[['event','date','location','person'].find(k=>!first(facts,k))]||'What feeling or lesson would you like to add, in your own words?';}
     let latestDraft='', photoItems=[];

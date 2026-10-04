@@ -5,6 +5,24 @@ function parseModelJson(content) {
   return JSON.parse(text);
 }
 
+function normaliseFacts(rawFacts) {
+  if (!Array.isArray(rawFacts)) return [];
+  const eventNumbers = new Map();
+  let nextEventNumber = 1;
+  return rawFacts.slice(0, 12).map((fact, index) => {
+    // eventId is supplied by the model. Keeping a map makes the displayed
+    // labels consecutive even if the model returns 1, 3, 7, for example.
+    const sourceEventId = String(fact?.eventId ?? fact?.event_id ?? fact?.eventNumber ?? `fact-${index + 1}`).trim() || `fact-${index + 1}`;
+    if (!eventNumbers.has(sourceEventId)) eventNumbers.set(sourceEventId, `E${nextEventNumber++}`);
+    return {
+      id: eventNumbers.get(sourceEventId),
+      kind: String(fact?.kind || 'OTHER').toUpperCase().slice(0, 20),
+      value: String(fact?.value || '').slice(0, 500),
+      excerpt: String(fact?.excerpt || '').slice(0, 700),
+    };
+  }).filter(fact => fact.value && fact.excerpt);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -17,7 +35,7 @@ export default async function handler(req, res) {
   if (!transcript) return res.status(400).json({ error: 'A transcript is required.' });
   if (transcript.length > MAX_TEXT_CHARS) return res.status(413).json({ error: 'Transcript is too long.' });
 
-  const system = `You are MemoryBook AI, an evidence-grounded autobiography drafting assistant. Extract only facts explicitly stated in the transcript. Never infer, embellish, diagnose, or invent details. Return valid JSON only, with this schema: {"draft":"string or empty","facts":[{"id":"E1","kind":"PERSON|DATE|LOCATION|EVENT|OTHER","value":"verbatim or concise stated fact","excerpt":"exact supporting quote"}],"question":"one clarification question or empty"}. Create a gentle first-person-neutral biographical paragraph only when an event is explicitly stated. If a key detail is missing, leave draft empty and ask one clarification question. Every factual claim in draft must be supported by one fact excerpt.`;
+  const system = `You are MemoryBook AI, an evidence-grounded autobiography drafting assistant. Extract only facts explicitly stated in the transcript. Never infer, embellish, diagnose, or invent details. Return valid JSON only, with this schema: {"draft":"string or empty","facts":[{"eventId":"1","kind":"PERSON|DATE|LOCATION|EVENT|OTHER","value":"verbatim or concise stated fact","excerpt":"exact supporting quote"}],"question":"one clarification question or empty"}. Use the same eventId for every fact about the same described event or scene, including its people, date, and location. Start a new eventId only when the narration moves to a different event, time, or scene; do not group separate events merely because they mention the same person or place. Create a gentle first-person-neutral biographical paragraph only when an event is explicitly stated. If a key detail is missing, leave draft empty and ask one clarification question. Every factual claim in draft must be supported by one fact excerpt.`;
   try {
     const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -40,12 +58,7 @@ export default async function handler(req, res) {
       return res.status(upstream.status).json({ error: 'Draft generation failed. Please try again shortly.' });
     }
     const result = parseModelJson(payload?.choices?.[0]?.message?.content);
-    const facts = Array.isArray(result.facts) ? result.facts.slice(0, 12).map((fact, index) => ({
-      id: `E${index + 1}`,
-      kind: String(fact?.kind || 'OTHER').toUpperCase().slice(0, 20),
-      value: String(fact?.value || '').slice(0, 500),
-      excerpt: String(fact?.excerpt || '').slice(0, 700),
-    })).filter(fact => fact.value && fact.excerpt) : [];
+    const facts = normaliseFacts(result.facts);
     return res.status(200).json({ draft: String(result.draft || '').slice(0, 2000), facts, question: String(result.question || '').slice(0, 500) });
   } catch (error) {
     console.error('Draft request failed', error);
